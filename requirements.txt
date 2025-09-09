@@ -10,7 +10,7 @@ numpy==1.23
 pillow==10.0
 tqdm==4.66
 tensorboard==2.14
-onnx==1.14
+onnx==1.18
 onnxruntime>=1.18
 # Optional:
 # onnxruntime-tools>=1.8

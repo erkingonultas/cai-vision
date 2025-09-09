@@ -3,8 +3,8 @@ from pathlib import Path
 
 IMG_SIZE = 224
 CKPT = Path("torch_runs/ckpt_best.pt")
-ONNX_FP32 = Path("torch_runs/efficientnet_lite0.onnx")
-ONNX_INT8 = Path("torch_runs/efficientnet_lite0.int8.onnx")  # optional
+ONNX_FP32 = Path("torch_runs/outputs/efficientnet_lite0.onnx")
+ONNX_INT8 = Path("torch_runs/outputs/efficientnet_lite0.int8.onnx")  # optional
 
 # Load best state
 ck = torch.load(CKPT, map_location="cpu")
@@ -24,9 +24,9 @@ torch.onnx.export(
 print(f"Saved {ONNX_FP32}")
 
 # (Optional) Dynamic INT8 quantization for smaller/faster CPU model
-# try:
-#     from onnxruntime.quantization import quantize_dynamic, QuantType
-#     quantize_dynamic(str(ONNX_FP32), str(ONNX_INT8), weight_type=QuantType.QUInt8)
-#     print(f"Saved {ONNX_INT8}")
-# except Exception as e:
-#     print(f"Quantization skipped: {e}")
+try:
+    from onnxruntime.quantization import quantize_dynamic, QuantType
+    quantize_dynamic(str(ONNX_FP32), str(ONNX_INT8), weight_type=QuantType.QUInt8)
+    print(f"Saved {ONNX_INT8}")
+except Exception as e:
+    print(f"Quantization skipped: {e}")
