@@ -22,7 +22,7 @@ import timm
 # -----------------------------
 IMG_SIZE = 224
 BATCH = 64
-EPOCHS = 8
+EPOCHS = 16
 LR = 1e-3
 LABEL_SMOOTH = 0.1
 SEED = 42
@@ -66,14 +66,24 @@ if DEVICE == "cuda":
 def load_csv(path: Path) -> List[Tuple[str, int]]:
     with open(path, newline="", encoding="utf-8") as f:
         rdr = csv.DictReader(f)
-        items = [(r["filepath"], int(r["class_id"])) for r in rdr]
-    return items
+        rows = [(r["filepath"], int(r["class_id"])) for r in rdr]
+    # Detect 1-based scheme and normalize to 0-based
+    min_id = min(cid for _, cid in rows)
+    shift = 1 if min_id == 1 else 0
+    rows_0 = [(fp, cid - shift) for fp, cid in rows]
+    return rows_0
 
 train_items = load_csv(TRAIN_CSV)
 val_items   = load_csv(VAL_CSV)
 test_items  = load_csv(TEST_CSV)
-NUM_CLASSES = max([cid for _, cid in (train_items + val_items + test_items)]) + 1
 
+all_ids = [cid for _, cid in (train_items + val_items + test_items)]
+NUM_CLASSES = max(all_ids) + 1
+
+# 0-based, contiguous ids?
+assert min(all_ids) == 0, f"Labels must start at 0, got {min(all_ids)}"
+assert set(all_ids) == set(range(NUM_CLASSES)), \
+       f"Non-contiguous class ids. Seen {len(set(all_ids))} classes, expected 0..{NUM_CLASSES-1}"
 # -----------------------------
 # Transforms (keep [0,1])
 # -----------------------------
@@ -151,7 +161,7 @@ def main():
     best_top1 = -1.0
     epochs_no_improve = 0
     best_state = None
-    print("Starting Epochs...")
+    print(f"Starting Epochs with {DEVICE.title()}...")
     
     pp_train = ProgressPrinter(interval=0.5)
     pp_val   = ProgressPrinter(interval=0.5)
