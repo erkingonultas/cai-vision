@@ -9,6 +9,7 @@ OUT_DIR = Path(f"./torch_runs")
 EXP_DIR = OUT_DIR / f"outputs/onnx_{ts}"
 EXP_DIR.mkdir(parents=True, exist_ok=True)
 ONNX_FP32 = EXP_DIR / "efficientnet_lite0.onnx"
+ONNX_CAIV = EXP_DIR / "cai_vision.onnx"
 ONNX_INT8 = EXP_DIR / "efficientnet_lite0.int8.onnx" # optional
 
 # Load best state
@@ -20,12 +21,14 @@ model.eval()
 
 # Export FP32 ONNX
 dummy = torch.randn(1, 3, IMG_SIZE, IMG_SIZE)
-torch.onnx.export(
+onnx_program = torch.onnx.export(
     model, dummy, str(ONNX_FP32),
     input_names=["input"], output_names=["logits"],
-    dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}},
+    dynamo=True,
+    # dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}},
     opset_version=18
 )
+onnx_program.save(str(ONNX_CAIV))
 print(f"Saved {ONNX_FP32}")
 
 # (Optional) Dynamic INT8 quantization for smaller/faster CPU model
