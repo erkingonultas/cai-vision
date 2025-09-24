@@ -1,3 +1,4 @@
 datasets/
 .venv/
-scripts/torch_runs/runs/
+scripts/torch_runs/outputs/ts*
+scripts/torch_runs/outputs/onnx_2025090*
