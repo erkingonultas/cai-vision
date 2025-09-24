@@ -1,10 +1,15 @@
+import time
 import torch, timm
 from pathlib import Path
 
 IMG_SIZE = 224
 CKPT = Path("torch_runs/ckpt_best.pt")
-ONNX_FP32 = Path("torch_runs/outputs/efficientnet_lite0.onnx")
-ONNX_INT8 = Path("torch_runs/outputs/efficientnet_lite0.int8.onnx")  # optional
+ts = time.strftime("%Y%m%d_%H%M%S")
+OUT_DIR = Path(f"./torch_runs")
+EXP_DIR = OUT_DIR / f"outputs/onnx_{ts}"
+EXP_DIR.mkdir(parents=True, exist_ok=True)
+ONNX_FP32 = EXP_DIR / "efficientnet_lite0.onnx"
+ONNX_INT8 = EXP_DIR / "efficientnet_lite0.int8.onnx" # optional
 
 # Load best state
 ck = torch.load(CKPT, map_location="cpu")
@@ -19,7 +24,7 @@ torch.onnx.export(
     model, dummy, str(ONNX_FP32),
     input_names=["input"], output_names=["logits"],
     dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}},
-    opset_version=17
+    opset_version=18
 )
 print(f"Saved {ONNX_FP32}")
 
