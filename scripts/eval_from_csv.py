@@ -35,7 +35,7 @@ with open("labels.txt", encoding="utf-8") as f:
 NUM_CLASSES = len(LABELS)
 
 # Load scripted model (choose one)
-MODEL_PATH = Path("./torch_runs/model_lite0_int8_head.ts")  # or model_lite0_int8_head.ts
+MODEL_PATH = Path("./torch_runs/outputs/ts_20250924_142401/model_lite0_fp32.ts")  # or model_lite0_int8_head.ts
 model = torch.jit.load(str(MODEL_PATH), map_location=DEVICE)
 model.eval()
 

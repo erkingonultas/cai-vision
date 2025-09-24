@@ -19,7 +19,7 @@ with open("labels.txt", encoding="utf-8") as f:
     labels = [l.strip() for l in f]
 
 # Load scripted model (choose one)
-MODEL_PATH = Path("./torch_runs/model_lite0_fp32.ts")  # or model_lite0_int8_head.ts
+MODEL_PATH = Path("./torch_runs/outputs/ts_20250924_142401/model_lite0_fp32.ts")  # or model_lite0_int8_head.ts
 model = torch.jit.load(str(MODEL_PATH), map_location=DEVICE)
 model.eval()
 
@@ -39,7 +39,7 @@ def predict(img_path):
         logits = model(x)
         probs = F.softmax(logits, dim=1).cpu().numpy()[0]
         topk = np.argsort(probs)[-5:][::-1]
-        return [(int(i), labels[i-1], float(probs[i])) for i in topk]
+        return [(int(i), labels[i], float(probs[i])) for i in topk]
 
 # Example:
 print(predict("../datasets/lahmacun-yemekcom-1.jpg"))
