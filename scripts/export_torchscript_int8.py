@@ -1,6 +1,6 @@
 # Exports TorchScript FP32 and a HEAD-dynamically-quantized version.
 
-import csv, random
+import csv, random, time
 from pathlib import Path
 import torch
 import timm
@@ -10,18 +10,29 @@ from PIL import Image
 IMG_SIZE = 224
 SEED = 42
 DEVICE = "cpu"   # export/calibration typically on CPU
-
-OUT_DIR = Path("./torch_runs")
-CKPT = OUT_DIR / "ckpt_best.pt"
-TS_FP32 = OUT_DIR / "model_lite0_fp32.ts"
-TS_DQ   = OUT_DIR / "model_lite0_int8_head.ts"
+ts = time.strftime("%Y%m%d_%H%M%S")
+OUT_DIR = Path(f"./torch_runs")
+CKPT = OUT_DIR / "model_final_fp32.pt"
+EXP_DIR = OUT_DIR / f"outputs/ts_{ts}"
+EXP_DIR.mkdir(parents=True, exist_ok=True)
+TS_FP32 = EXP_DIR / "model_lite0_fp32.ts"
+TS_DQ   = EXP_DIR / "model_lite0_int8_head.ts"
 
 # Load best ckpt
 ckpt = torch.load(CKPT, map_location="cpu")
+
+# --- Validate labels vs checkpoint head size ---
+labels_path = Path("./labels.txt")
+if not labels_path.exists():
+    raise FileNotFoundError(f"labels.txt not found at {labels_path}. Make sure it matches the training classes.")
+
+with open(labels_path, encoding="utf-8") as f:
+    labels = [l.strip() for l in f if l.strip()]
+
 num_classes = ckpt["num_classes"]
 
 model = timm.create_model("efficientnet_lite0", pretrained=False, num_classes=num_classes)
-model.load_state_dict(ckpt["model"])
+model.load_state_dict(ckpt["model"], strict=True)
 model.eval()
 
 # Example input
