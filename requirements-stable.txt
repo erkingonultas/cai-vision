@@ -1,0 +1,27 @@
+# --- CPU-agnostic dependencies (work on any machine, no CUDA needed) ---
+#
+# This file is a subset of `requirements.txt` that contains only the
+# dependencies which do NOT require a CUDA-enabled PyTorch build.
+#
+# Use this when you only need to:
+#   - run inference (test_torch_inference.py, validate_onnx.py)
+#   - export models (export_onnx.py, export_torchscript_int8.py)
+#   - run evaluation (eval_from_csv.py) on CPU
+#
+# For training, see `requirements.txt` or `requirements-cuda130.txt`.
+
+# --- Model & image processing ---
+timm==0.9.12
+numpy==2.3.3
+pillow==10.0.0
+
+# --- Progress / logging ---
+tqdm==4.66.0
+tensorboard==2.14.0
+
+# --- ONNX export & validation ---
+onnx==1.18.0
+onnxruntime==1.22.1
+onnxscript==0.5.2
+# Optional:
+# onnxruntime-tools>=1.8

@@ -1,3 +1,15 @@
+# CAI-Vision — all-in-one requirements (CUDA 13.0 nightly + everything else)
+#
+# This is the working setup used on the training desktop. If you only need
+# to run inference / export / evaluate, use `requirements-stable.txt`
+# (CPU-only, no nightly torch). If you want to reproduce the training env
+# on another machine, use `requirements-cuda130.txt` plus the stable deps.
+#
+# Quick reference:
+#   pip install -r requirements.txt            # <- this file (CUDA 13.0)
+#   pip install -r requirements-stable.txt     # <- CPU only, inference/eval
+#   pip install -r requirements-cuda130.txt    # <- nightly torch/torchvision only
+
 # --- Core training (CUDA 12.1 builds) ---
 torch==2.10.0.dev20250923+cu130
 torchvision==0.25.0.dev20250923+cu130
