@@ -1,5 +1,21 @@
+# --- Datasets & virtual envs ---
 datasets/
 .venv/
-scripts/torch_runs/outputs/ts*
-scripts/torch_runs/outputs/onnx_2025090*
+venv/
+
+# --- Torch training artefacts (large; reproducible from scripts) ---
+scripts/torch_runs/*.pt
+scripts/torch_runs/ckpt_*.pt
+scripts/torch_runs/model_final_*.pt
+
+# --- Torch/ONNX export outputs (timestamped; rebuildable) ---
+scripts/torch_runs/outputs/ts_*/
+scripts/torch_runs/outputs/onnx_*/
+scripts/torch_runs/outputs/onnx_2025090*/
+
+# --- Evaluation outputs (timestamped) ---
+scripts/torch_runs/eval_*/
 scripts/torch_runs/eval*
+
+# --- Per-epoch metrics CSVs from training ---
+scripts/torch_runs/metrics_*.csv
