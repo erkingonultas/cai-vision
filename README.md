@@ -1,6 +1,8 @@
 # CAI-VISION
 ### Very basic vision model to identify foods around the world including a few turkish foods.
 
+*Released under the [MIT License](LICENSE) — Copyright © 2025 Erkin Gönültaş.*
+
 ## How to Use
 Prep your env and then go inside of `./scripts` directory.
 
