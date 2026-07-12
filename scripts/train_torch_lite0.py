@@ -1,9 +1,3 @@
-# next actions
-# Run train_keras_lite0.py to fine-tune Lite0.
-# Run export_tflite_int8.py → model_lite0_int8.tflite + labels.txt.
-# Sanity-check with test_tflite_inference.py.
-# Ship to Flutter using tflite_flutter, matching preprocessing and enabling NNAPI/Core ML/XNNPACK.
-
 import sys, csv, time, copy, random
 from pathlib import Path
 from typing import List, Tuple
@@ -91,7 +85,6 @@ from torchvision import transforms
 
 train_tfms = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    # transforms.Lambda(lambda img: img.convert("RGB")), # It is inside the Dataset class
     transforms.ToTensor(),                         # -> [0,1]
     transforms.RandomHorizontalFlip(p=0.5),
     transforms.ColorJitter(brightness=0.1, contrast=0.1),
@@ -99,7 +92,6 @@ train_tfms = transforms.Compose([
 
 eval_tfms = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    # transforms.Lambda(lambda img: img.convert("RGB")), # It is inside the Dataset class
     transforms.ToTensor(),                         # -> [0,1]
 ])
 

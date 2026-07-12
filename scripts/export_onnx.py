@@ -10,7 +10,6 @@ EXP_DIR = OUT_DIR / f"outputs/onnx_{ts}"
 EXP_DIR.mkdir(parents=True, exist_ok=True)
 ONNX_FP32 = EXP_DIR / "efficientnet_lite0.onnx"
 ONNX_CAIV = EXP_DIR / "cai_vision.onnx"
-ONNX_INT8 = EXP_DIR / "efficientnet_lite0.int8.onnx" # optional
 
 # Load best state
 ck = torch.load(CKPT, map_location="cpu")
@@ -25,16 +24,8 @@ onnx_program = torch.onnx.export(
     model, dummy, str(ONNX_FP32),
     input_names=["input"], output_names=["logits"],
     dynamo=True,
-    # dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}},
     opset_version=18
 )
 onnx_program.save(str(ONNX_CAIV))
 print(f"Saved {ONNX_FP32}")
-
-# (Optional) Dynamic INT8 quantization for smaller/faster CPU model
-# try:
-#     from onnxruntime.quantization import quantize_dynamic, QuantType
-#     quantize_dynamic(str(ONNX_FP32), str(ONNX_INT8), weight_type=QuantType.QUInt8)
-#     print(f"Saved {ONNX_INT8}")
-# except Exception as e:
-#     print(f"Quantization skipped: {e}")
+print(f"Saved {ONNX_CAIV}")
