@@ -1,0 +1,18 @@
+# --- CUDA 13.0 (nightly) dependencies for retraining ---
+#
+# This file contains the PyTorch nightly build pinned to CUDA 13.0, which
+# is the configuration used on the training desktop that produced the
+# committed model. Use it if you want to retrain CAI-Vision from scratch
+# on a CUDA 13.x GPU.
+#
+# If you only need to run inference / export / evaluate, prefer
+# `requirements-stable.txt` (CPU-only, much smaller, no nightly torch).
+#
+# For the all-in-one file (this CUDA build + everything else), see
+# `requirements.txt`.
+
+# --- Core training (nightly, CUDA 13.0) ---
+torch==2.10.0.dev20250923+cu130
+torchvision==0.25.0.dev20250923+cu130
+# torchaudio is optional for this project; uncomment if needed
+# torchaudio==2.4.0+cu121
