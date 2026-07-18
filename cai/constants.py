@@ -26,6 +26,11 @@ TORCH_RUNS_DIR: Path = SCRIPTS_DIR / "torch_runs"
 CKPT_BEST: Path = TORCH_RUNS_DIR / "ckpt_best.pt"
 MODEL_FINAL_FP32: Path = TORCH_RUNS_DIR / "model_final_fp32.pt"
 
+# Dataset manifests (written by data-prep/dataset_schema_tool.py, read by train).
+TRAIN_CSV: Path = DATASET_ROOT / "train.csv"
+VAL_CSV: Path = DATASET_ROOT / "val.csv"
+TEST_CSV: Path = DATASET_ROOT / "test.csv"
+
 # Optional dataset prep subcommand (used by dataset_schema_tool.py).
 CATEGORY_TXT: Path = DATASET_ROOT / "category.txt"
 CLASSES_CSV: Path = DATASET_ROOT / "classes.csv"

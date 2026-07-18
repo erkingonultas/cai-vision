@@ -1,39 +1,83 @@
-import sys, csv, time, copy, random
+"""Train EfficientNet-Lite0 (via timm) on the CAI-Vision dataset.
+
+Reads train/val/test CSVs (filepath,class_id,...), builds the
+``efficientnet_lite0`` backbone with ImageNet pretraining, trains with
+Adam + cosine-annealing-warm-restarts + label smoothing + early stopping,
+evaluates on the test split, and writes:
+
+* ``scripts/torch_runs/ckpt_best.pt`` — best (by val top-1) weights,
+  overwritten each time a new best is found.
+* ``scripts/torch_runs/model_final_fp32.pt`` — final weights (best
+  restored) at end of training, in the format consumed by the export
+  scripts.
+
+Both checkpoints are dicts of the form
+``{"model": state_dict, "num_classes": N, ...}``.
+
+Usage:
+    # Defaults (matches original hardcoded values):
+    python scripts/train_torch_lite0.py
+
+    # Hyperparameter sweep:
+    python scripts/train_torch_lite0.py --epochs 20 --lr 5e-4 --batch-size 32
+
+    # Point at a different dataset root:
+    python scripts/train_torch_lite0.py --data-root /path/to/dataset
+"""
+from __future__ import annotations
+
+import argparse
+import copy
+import csv
+import random
+import sys
+import time
 from pathlib import Path
 from typing import List, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-from torch.utils.data import Dataset, DataLoader
-from PIL import Image
-import numpy as np
-import timm
+from torch.utils.data import DataLoader
+
+from cai.constants import (
+    CKPT_BEST,
+    DATASET_ROOT,
+    MODEL_FINAL_FP32,
+    TEST_CSV,
+    TRAIN_CSV,
+    TORCH_RUNS_DIR,
+    VAL_CSV,
+)
+from cai.data import CSVDataset, make_loader, normalize_class_ids
+from cai.device import get_device
+from cai.metrics import topk_correct
+from cai.model import build_model
+
+# An "item" is a (filepath, class_id) pair. Class ids are 0-based.
+Item = Tuple[str, int]
+
 
 # -----------------------------
-# Config
+# Progress printer
 # -----------------------------
-IMG_SIZE = 224
-BATCH = 64
-EPOCHS = 16
-LR = 1e-3
-LABEL_SMOOTH = 0.1
-SEED = 42
-NUM_WORKERS = 8
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DATA_ROOT = Path("../datasets/cai-vision-dataset")
-TRAIN_CSV, VAL_CSV, TEST_CSV = DATA_ROOT / "train.csv", DATA_ROOT / "val.csv", DATA_ROOT / "test.csv"
-OUT_DIR = Path("./torch_runs")
-OUT_DIR.mkdir(parents=True, exist_ok=True)
-BEST_CKPT = OUT_DIR / "ckpt_best.pt"
-
 class ProgressPrinter:
-    def __init__(self, interval=0.5):
+    """Throttled, carriage-return progress line for stdout."""
+
+    def __init__(self, interval: float = 0.5) -> None:
         self.interval = interval
         self._last = 0.0
 
-    def update(self, epoch, total_epochs, i, total_batches, phase):
+    def update(
+        self,
+        epoch: int,
+        total_epochs: int,
+        i: int,
+        total_batches: int,
+        phase: str,
+    ) -> None:
         now = time.time()
         if (now - self._last) >= self.interval or i == total_batches:
             pct = 100.0 * i / max(1, total_batches)
@@ -41,218 +85,309 @@ class ProgressPrinter:
             sys.stdout.flush()
             self._last = now
 
-    def newline(self):
+    def newline(self) -> None:
         sys.stdout.write("\n")
         sys.stdout.flush()
 
-# -----------------------------
-# Repro
-# -----------------------------
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-if DEVICE == "cuda":
-    torch.cuda.manual_seed_all(SEED)
 
 # -----------------------------
-# Data utils
+# Data loading
 # -----------------------------
-def load_csv(path: Path) -> List[Tuple[str, int]]:
-    with open(path, newline="", encoding="utf-8") as f:
-        rdr = csv.DictReader(f)
-        rows = [(r["filepath"], int(r["class_id"])) for r in rdr]
-    # Detect 1-based scheme and normalize to 0-based
-    min_id = min(cid for _, cid in rows)
-    shift = 1 if min_id == 1 else 0
-    rows_0 = [(fp, cid - shift) for fp, cid in rows]
-    return rows_0
+def _load_csv_items(csv_path: Path) -> List[Item]:
+    """Read a CSV and return (filepath, class_id) items normalised to 0-based.
 
-train_items = load_csv(TRAIN_CSV)
-val_items   = load_csv(VAL_CSV)
-test_items  = load_csv(TEST_CSV)
+    The CSV must have at least the columns ``filepath`` and ``class_id``.
+    Class ids may be 0-based or 1-based; they are auto-detected by
+    ``normalize_class_ids``.
 
-all_ids = [cid for _, cid in (train_items + val_items + test_items)]
-NUM_CLASSES = max(all_ids) + 1
+    Raises:
+        FileNotFoundError: If ``csv_path`` does not exist.
+        ValueError: If the class ids are not contiguous from 0 after
+            normalisation.
+    """
+    if not csv_path.exists():
+        raise FileNotFoundError(
+            f"CSV not found: {csv_path}. "
+            f"Run `python scripts/data-prep/dataset_schema_tool.py` to generate it."
+        )
 
-# 0-based, contiguous ids?
-assert min(all_ids) == 0, f"Labels must start at 0, got {min(all_ids)}"
-assert set(all_ids) == set(range(NUM_CLASSES)), \
-       f"Non-contiguous class ids. Seen {len(set(all_ids))} classes, expected 0..{NUM_CLASSES-1}"
-# -----------------------------
-# Transforms (keep [0,1])
-# -----------------------------
-from torchvision import transforms
+    items: List[Item] = []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            items.append((row["filepath"].strip(), int(row["class_id"])))
+    return normalize_class_ids(items)
 
-train_tfms = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),                         # -> [0,1]
-    transforms.RandomHorizontalFlip(p=0.5),
-    transforms.ColorJitter(brightness=0.1, contrast=0.1),
-])
 
-eval_tfms = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),                         # -> [0,1]
-])
+def _seed_everything(seed: int, device: torch.device) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if device.type == "cuda":
+        torch.cuda.manual_seed_all(seed)
 
-class CSVDataset(Dataset):
-    def __init__(self, items, training=False):
-        self.items = items
-        self.training = training
-        self.tfms = train_tfms if training else eval_tfms
 
-    def __len__(self):
-        return len(self.items)
-
-    def __getitem__(self, idx):
-        path, label = self.items[idx]
-        img = Image.open(path).convert("RGB")  # <- convert here (picklable)
-        x = self.tfms(img)
-        return x, label
-
-def make_loader(items, training=False):
-    return DataLoader(
-        CSVDataset(items, training=training),
-        batch_size=BATCH,
-        shuffle=training,
-        num_workers=NUM_WORKERS,
-        pin_memory=(DEVICE=="cuda"),
-        drop_last=training
+def _build_loaders(
+    train_items: List[Item],
+    val_items: List[Item],
+    test_items: List[Item],
+    *,
+    batch_size: int,
+    num_workers: int,
+    pin_memory: bool,
+) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    """Construct train/val/test DataLoaders with the right per-phase behaviour."""
+    return (
+        make_loader(
+            train_items,
+            training=True,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            drop_last=True,
+        ),
+        make_loader(
+            val_items,
+            training=False,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            drop_last=False,
+        ),
+        make_loader(
+            test_items,
+            training=False,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            drop_last=False,
+        ),
     )
-def main():
-    train_loader = make_loader(train_items, training=True)
-    val_loader   = make_loader(val_items, training=False)
-    test_loader  = make_loader(test_items, training=False)
-    print("Make Loader Completed")
-    # -----------------------------
-    # Model: EfficientNet-Lite0 (timm)
-    # -----------------------------
-    # Keep preprocessing in data loader; model expects float32 [0,1].
-    model = timm.create_model("efficientnet_lite0", pretrained=True, num_classes=NUM_CLASSES)
-    model = model.to(DEVICE)
-    print("Model Loaded")
-    # -----------------------------
-    # Loss / Optim / Sched / Metrics
-    # -----------------------------
-    criterion = nn.CrossEntropyLoss(label_smoothing=LABEL_SMOOTH)
-    optimizer = optim.Adam(model.parameters(), lr=LR)
-    # Use warm restarts roughly like your TF CosineDecayRestarts
-    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=max(1, len(train_loader)*5), T_mult=2, eta_min=1e-5)
 
-    def topk_correct(logits, target, k=1):
-        with torch.no_grad():
-            _, pred = logits.topk(k, 1, True, True)
-            pred = pred.t()
-            correct = pred.eq(target.view(1, -1))
-            return correct[:k].reshape(-1).float().sum().item()
+
+# -----------------------------
+# Train / eval helpers
+# -----------------------------
+def _train_one_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scheduler: CosineAnnealingWarmRestarts,
+    device: torch.device,
+    epoch: int,
+    total_epochs: int,
+    pp: ProgressPrinter,
+) -> Tuple[float, float, float]:
+    """Run one training epoch and return (loss, top1, top5) averaged over samples."""
+    model.train()
+    n_batches = len(loader)
+    total_loss, top1_correct, top5_correct, n = 0.0, 0.0, 0.0, 0
+    for i, (xb, yb) in enumerate(loader, 1):
+        xb = xb.to(device, non_blocking=True)
+        yb = yb.to(device, non_blocking=True)
+
+        optimizer.zero_grad(set_to_none=True)
+        logits = model(xb)
+        loss = criterion(logits, yb)
+        loss.backward()
+        optimizer.step()
+        # Per-iteration step works with CosineAnnealingWarmRestarts.
+        scheduler.step(epoch + n / len(loader))
+
+        bs = xb.size(0)
+        total_loss += loss.item() * bs
+        top1_correct += topk_correct(logits, yb, k=1)
+        top5_correct += topk_correct(logits, yb, k=5)
+        n += bs
+        pp.update(epoch, total_epochs, i, n_batches, "train")
+    pp.newline()
+    return (
+        total_loss / max(1, n),
+        top1_correct / max(1, n),
+        top5_correct / max(1, n),
+    )
+
+
+@torch.no_grad()
+def _evaluate(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+    epoch: int,
+    total_epochs: int,
+    pp: ProgressPrinter,
+) -> Tuple[float, float, float]:
+    """Run one evaluation pass and return (loss, top1, top5) averaged over samples."""
+    model.eval()
+    n_batches = len(loader)
+    total_loss, top1_correct, top5_correct, n = 0.0, 0.0, 0.0, 0
+    for j, (xb, yb) in enumerate(loader, 1):
+        xb = xb.to(device, non_blocking=True)
+        yb = yb.to(device, non_blocking=True)
+        logits = model(xb)
+        loss = criterion(logits, yb)
+        bs = xb.size(0)
+        total_loss += loss.item() * bs
+        top1_correct += topk_correct(logits, yb, k=1)
+        top5_correct += topk_correct(logits, yb, k=5)
+        n += bs
+        pp.update(epoch, total_epochs, j, n_batches, "val")
+    pp.newline()
+    return (
+        total_loss / max(1, n),
+        top1_correct / max(1, n),
+        top5_correct / max(1, n),
+    )
+
+
+# -----------------------------
+# Main
+# -----------------------------
+def main() -> None:
+    ap = argparse.ArgumentParser(
+        description="Train EfficientNet-Lite0 on the CAI-Vision dataset."
+    )
+    ap.add_argument("--data-root", type=Path, default=DATASET_ROOT,
+                    help="Directory containing train.csv/val.csv/test.csv.")
+    ap.add_argument("--train-csv", type=Path, default=TRAIN_CSV,
+                    help="Path to the train CSV.")
+    ap.add_argument("--val-csv",   type=Path, default=VAL_CSV,
+                    help="Path to the val CSV.")
+    ap.add_argument("--test-csv",  type=Path, default=TEST_CSV,
+                    help="Path to the test CSV.")
+    ap.add_argument("--out-dir",   type=Path, default=TORCH_RUNS_DIR,
+                    help="Output directory; ckpt_best.pt and model_final_fp32.pt go here.")
+    ap.add_argument("--epochs",        type=int,   default=16)
+    ap.add_argument("--batch-size",    type=int,   default=64)
+    ap.add_argument("--lr",            type=float, default=1e-3)
+    ap.add_argument("--label-smooth",  type=float, default=0.1)
+    ap.add_argument("--patience",      type=int,   default=4,
+                    help="Early-stopping patience in epochs (on val top-1).")
+    ap.add_argument("--num-workers",   type=int,   default=8)
+    ap.add_argument("--seed",          type=int,   default=42)
+    args = ap.parse_args()
+
+    # Resolve the canonical output paths under the (possibly overridden) out-dir.
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    best_ckpt = args.out_dir / CKPT_BEST.name
+    final_ckpt = args.out_dir / MODEL_FINAL_FP32.name
+
+    # --- Repro ---
+    device = get_device()
+    _seed_everything(args.seed, device)
+
+    # --- Data ---
+    print("Loading CSVs...")
+    train_items = _load_csv_items(args.train_csv)
+    val_items   = _load_csv_items(args.val_csv)
+    test_items  = _load_csv_items(args.test_csv)
+
+    # _load_csv_items already normalises each list to contiguous 0-based ids;
+    # the original asserted contiguity across the union, so we keep the same
+    # invariant here.
+    all_ids = {cid for _, cid in (train_items + val_items + test_items)}
+    if min(all_ids) != 0 or all_ids != set(range(len(all_ids))):
+        raise ValueError(
+            f"Non-contiguous class ids across train+val+test. "
+            f"Got {sorted(all_ids)[:5]}... (min={min(all_ids)}, "
+            f"max={max(all_ids)}, count={len(all_ids)})."
+        )
+    num_classes = max(all_ids) + 1
+    print(
+        f"Loaded {len(train_items)} train, {len(val_items)} val, "
+        f"{len(test_items)} test items. num_classes={num_classes}"
+    )
+
+    pin_memory = (device.type == "cuda")
+    train_loader, val_loader, test_loader = _build_loaders(
+        train_items, val_items, test_items,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=pin_memory,
+    )
+    print("Make Loader Completed")
+
+    # --- Model ---
+    # Keep preprocessing in the data loader; the model expects float32 [0,1].
+    model = build_model(num_classes, pretrained=True).to(device)
+    print("Model Loaded")
+
+    # --- Loss / Optim / Sched ---
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smooth)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    # Warm restarts roughly like TF CosineDecayRestarts.
+    scheduler = CosineAnnealingWarmRestarts(
+        optimizer, T_0=max(1, len(train_loader) * 5), T_mult=2, eta_min=1e-5
+    )
     print("Loss / Optim / Sched / Metrics Loaded")
-    # -----------------------------
-    # Train / Eval loops with EarlyStopping on val_top1
-    # -----------------------------
-    PATIENCE = 4
+
+    # --- Train / Val loop with early stopping on val top-1 ---
     best_top1 = -1.0
     epochs_no_improve = 0
-    best_state = None
-    print(f"Starting Epochs with {DEVICE.title()}...")
-    
+    best_state: dict | None = None
+    print(f"Starting Epochs with {device.type.title()}...")
+
     pp_train = ProgressPrinter(interval=0.5)
-    pp_val   = ProgressPrinter(interval=0.5)
+    pp_val = ProgressPrinter(interval=0.5)
 
-    for epoch in range(1, EPOCHS+1):
-        # ===== TRAIN =====
-        model.train()
-        tr_loss, tr_top1, tr_top5, n_train = 0.0, 0.0, 0.0, 0
-        n_batches = len(train_loader)
-        for i, (xb, yb) in enumerate(train_loader, 1):
-            xb, yb = xb.to(DEVICE, non_blocking=True), yb.to(DEVICE, non_blocking=True)
-            optimizer.zero_grad(set_to_none=True)
-            logits = model(xb)
-            loss = criterion(logits, yb)
-            loss.backward()
-            optimizer.step()
-            scheduler.step(epoch + n_train/len(train_loader))  # per-iteration step works with WarmRestarts
+    for epoch in range(1, args.epochs + 1):
+        tr_loss, tr_top1, tr_top5 = _train_one_epoch(
+            model, train_loader, criterion, optimizer, scheduler,
+            device, epoch, args.epochs, pp_train,
+        )
+        va_loss, va_top1, va_top5 = _evaluate(
+            model, val_loader, criterion, device, epoch, args.epochs, pp_val,
+        )
 
-            bs = xb.size(0)
-            tr_loss += loss.item() * bs
-            tr_top1 += topk_correct(logits, yb, k=1)
-            tr_top5 += topk_correct(logits, yb, k=5)
-            n_train += bs
-            pp_train.update(epoch, EPOCHS, i, n_batches, "train")
-        pp_train.newline()
-
-        # ===== VAL =====
-        model.eval()
-        n_val_batches = len(val_loader)
-        va_loss, va_top1, va_top5, n_val = 0.0, 0.0, 0.0, 0
-        with torch.no_grad():
-            for j, (xb, yb) in enumerate(val_loader, 1):
-                xb, yb = xb.to(DEVICE, non_blocking=True), yb.to(DEVICE, non_blocking=True)
-                logits = model(xb)
-                loss = criterion(logits, yb)
-                bs = xb.size(0)
-                va_loss += loss.item() * bs
-                va_top1 += topk_correct(logits, yb, k=1)
-                va_top5 += topk_correct(logits, yb, k=5)
-                n_val += bs
-                pp_val.update(epoch, EPOCHS, j, n_val_batches, "val")
-        pp_val.newline()
-
-        tr_loss /= max(1, n_train)
-        tr_top1 /= max(1, n_train)
-        tr_top5 /= max(1, n_train)
-        va_loss /= max(1, n_val)
-        va_top1 /= max(1, n_val)
-        va_top5 /= max(1, n_val)
-
-        print(f"Epoch {epoch:02d} | "
+        print(
+            f"Epoch {epoch:02d} | "
             f"train loss {tr_loss:.4f} top1 {tr_top1:.4f} top5 {tr_top5:.4f} | "
-            f"val loss {va_loss:.4f} top1 {va_top1:.4f} top5 {va_top5:.4f}")
+            f"val loss {va_loss:.4f} top1 {va_top1:.4f} top5 {va_top5:.4f}"
+        )
 
-        # Early stopping on val_top1 (restore best like TF)
         if va_top1 > best_top1:
             best_top1 = va_top1
             best_state = copy.deepcopy(model.state_dict())
-            torch.save({"model": best_state, "num_classes": NUM_CLASSES, "epoch": epoch}, BEST_CKPT)
+            torch.save(
+                {"model": best_state, "num_classes": num_classes, "epoch": epoch},
+                best_ckpt,
+            )
             epochs_no_improve = 0
         else:
             epochs_no_improve += 1
-            if epochs_no_improve >= PATIENCE:
-                print(f"Early stopping at epoch {epoch}. Best val_top1={best_top1:.4f}")
+            if epochs_no_improve >= args.patience:
+                print(
+                    f"Early stopping at epoch {epoch}. "
+                    f"Best val_top1={best_top1:.4f}"
+                )
                 break
 
-    # Load best
+    # --- Restore best & run test eval ---
     print("Loading the best...")
     if best_state is not None:
         model.load_state_dict(best_state)
-    # -----------------------------
-    # Quick test eval (mirrors TF "model.evaluate")
-    # -----------------------------
-    print("Starting Model Eval...")
-    model.eval()
-    te_loss, te_top1, te_top5, n_test = 0.0, 0.0, 0.0, 0
-    with torch.no_grad():
-        for xb, yb in test_loader:
-            xb, yb = xb.to(DEVICE, non_blocking=True), yb.to(DEVICE, non_blocking=True)
-            logits = model(xb)
-            loss = criterion(logits, yb)
-            bs = xb.size(0)
-            te_loss += loss.item() * bs
-            te_top1 += topk_correct(logits, yb, k=1)
-            te_top5 += topk_correct(logits, yb, k=5)
-            n_test += bs
 
-    te_loss /= max(1, n_test)
-    te_top1 /= max(1, n_test)
-    te_top5 /= max(1, n_test)
+    print("Starting Model Eval...")
+    # Reuse the per-epoch eval helper with a silent printer, since for the
+    # final test pass we only need the aggregate numbers, not per-batch lines.
+    class _SilentPrinter:
+        def update(self, *a, **kw): pass
+        def newline(self): pass
+    te_loss, te_top1, te_top5 = _evaluate(
+        model, test_loader, criterion, device,
+        epoch=args.epochs, total_epochs=args.epochs, pp=_SilentPrinter(),
+    )
     print({"TEST_loss": te_loss, "TEST_top1": te_top1, "TEST_top5": te_top5})
 
-    # Save a plain FP32 final for export step
-    FINAL_PATH = OUT_DIR / "model_final_fp32.pt"
-    torch.save({"model": model.state_dict(), "num_classes": NUM_CLASSES}, FINAL_PATH)
-    print(f"Saved: {FINAL_PATH}")
+    # --- Save plain FP32 final for export ---
+    torch.save({"model": model.state_dict(), "num_classes": num_classes}, final_ckpt)
+    print(f"Saved: {final_ckpt}")
+
 
 if __name__ == "__main__":
-    # Optional: helps when packaging as an .exe; harmless otherwise
+    # Optional: helps when packaging as an .exe; harmless otherwise.
     from multiprocessing import freeze_support
     freeze_support()
     main()
