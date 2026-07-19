@@ -12,7 +12,11 @@
 # `requirements.txt`.
 
 # --- Core training (nightly, CUDA 13.0) ---
-torch==2.10.0.dev20250923+cu130
-torchvision==0.25.0.dev20250923+cu130
+# torch==2.10.0.dev20250923+cu130
+# torchvision==0.25.0.dev20250923+cu130
+--extra-index-url https://download.pytorch.org/whl/cu130
+
+torch==2.10.0
+torchvision==0.25.0
 # torchaudio is optional for this project; uncomment if needed
 # torchaudio==2.4.0+cu121
