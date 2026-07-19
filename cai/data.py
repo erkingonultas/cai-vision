@@ -12,10 +12,19 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-from cai.constants import IMG_SIZE
+from cai.constants import IMG_SIZE, IMG_NORM_MEAN, IMG_NORM_STD
 
 # An "item" is a (filepath, class_id) pair. Class ids are 0-based.
 Item = Tuple[str, int]
+
+# EfficientNet-Lite0 expects inputs normalised to [-1, 1].
+# This maps ToTensor()'s [0, 1] range to [-1, 1].
+# Note: standard EfficientNet-B* uses ImageNet stats instead:
+#   mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+NORMALIZE = transforms.Normalize(
+    mean= IMG_NORM_MEAN,
+    std=IMG_NORM_STD,
+)
 
 
 # --- Transforms ---
@@ -26,6 +35,7 @@ def _to_tensor() -> transforms.Compose:
         [
             transforms.Resize((IMG_SIZE, IMG_SIZE)),
             transforms.ToTensor(),  # -> [0, 1] float32
+            NORMALIZE,              # -> [-1, 1] float32
         ]
     )
 
@@ -37,7 +47,8 @@ def train_transforms() -> transforms.Compose:
             transforms.Resize((IMG_SIZE, IMG_SIZE)),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.ColorJitter(brightness=0.1, contrast=0.1),
-            transforms.ToTensor(),
+            transforms.ToTensor(),  # -> [0, 1] float32
+            NORMALIZE,              # -> [-1, 1] float32
         ]
     )
 
@@ -118,8 +129,8 @@ def make_loader(
     items: List[Item],
     *,
     training: bool = False,
-    batch_size: int = 32,
-    num_workers: int = 0,
+    batch_size: int = 64,
+    num_workers: int = 6,
     pin_memory: bool = False,
     drop_last: bool = False,
 ) -> torch.utils.data.DataLoader:

@@ -10,6 +10,8 @@ from pathlib import Path
 # --- Model architecture ---
 MODEL_NAME: str = "efficientnet_lite0"
 IMG_SIZE: int = 224
+IMG_NORM_MEAN = [0.5, 0.5, 0.5]
+IMG_NORM_STD = [0.5, 0.5, 0.5]
 
 # --- Filesystem layout ---
 # Project root is two levels up from this file (cai/constants.py -> root).
@@ -22,7 +24,7 @@ DATASET_ROOT: Path = PROJECT_ROOT / "datasets" / "cai-vision-dataset"
 LABELS_FILE: Path = SCRIPTS_DIR / "labels.txt"
 
 # Torch training output directory (per-run subdirs are created by scripts).
-TORCH_RUNS_DIR: Path = SCRIPTS_DIR / "torch_runs"
+TORCH_RUNS_DIR: Path = PROJECT_ROOT / "torch_runs"
 CKPT_BEST: Path = TORCH_RUNS_DIR / "ckpt_best.pt"
 MODEL_FINAL_FP32: Path = TORCH_RUNS_DIR / "model_final_fp32.pt"
 
