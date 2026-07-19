@@ -19,7 +19,7 @@ Usage:
     python scripts/train_torch_lite0.py
 
     # Hyperparameter sweep:
-    python scripts/train_torch_lite0.py --epochs 20 --lr 5e-4 --batch-size 32
+    python scripts/train_torch_lite0.py --epochs 16 --lr 1e-3 --batch-size 64
 
     # Point at a different dataset root:
     python scripts/train_torch_lite0.py --data-root /path/to/dataset
@@ -265,7 +265,7 @@ def main() -> None:
     ap.add_argument("--label-smooth",  type=float, default=0.1)
     ap.add_argument("--patience",      type=int,   default=4,
                     help="Early-stopping patience in epochs (on val top-1).")
-    ap.add_argument("--num-workers",   type=int,   default=8)
+    ap.add_argument("--num-workers",   type=int,   default=6)
     ap.add_argument("--seed",          type=int,   default=42)
     args = ap.parse_args()
 

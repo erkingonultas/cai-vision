@@ -19,7 +19,7 @@ Usage:
 
     # Pin to a specific TorchScript model, increase throughput:
     python scripts/eval_from_csv.py --csv /path/to/test.csv \\
-        --model scripts/torch_runs/outputs/ts_latest/model_lite0_fp32.ts \\
+        --model-path scripts/torch_runs/outputs/ts_latest/model_lite0_fp32.ts \\
         --batch-size 64 --workers 4
 
     # Also write per-sample predictions:
@@ -104,6 +104,8 @@ def evaluate(
     """Run the evaluation and write the result files. Returns a summary dict."""
     device = get_device()
     num_classes = len(labels)
+
+    model = _load_scripted_model(model_path, get_device())
 
     items = _read_csv_items(csv_path)
     dataset = CSVDataset(items, transform=eval_transforms(), return_path=True)
@@ -230,7 +232,7 @@ def main() -> None:
         help="Path to test CSV (header + rows of filepath,class_id,sha1).",
     )
     ap.add_argument(
-        "--model",
+        "--model-path",
         type=Path,
         default=TORCH_RUNS_DIR / "model_lite0_fp32.ts",
         help="Path to a TorchScript .ts model file. "
@@ -253,11 +255,10 @@ def main() -> None:
     args = ap.parse_args()
 
     labels = load_labels(args.labels)
-    model = _load_scripted_model(args.model, get_device())
-
+    
     evaluate(
         csv_path=args.csv,
-        model_path=args.model,
+        model_path=args.model_path,
         out_dir=args.out,
         labels=labels,
         batch_size=args.batch_size,
