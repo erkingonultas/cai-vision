@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """ HOW TO USE 
 
     # 0) Make sure classes.csv is synced with category.txt
@@ -28,14 +30,12 @@
 
 """
 
-#!/usr/bin/env python3
-
 import random
 import argparse, csv, hashlib, os, re, sys, shutil
 from collections import defaultdict
 from pathlib import Path
 
-DATA_ROOT = Path("../../datasets/cai-vision-dataset")
+DATA_ROOT = Path("./datasets/cai-vision-dataset")
 CAT_FILE = DATA_ROOT / "category.txt"
 CLASSES_CSV = DATA_ROOT / "classes.csv"
 MULTILABEL_OVERRIDES = DATA_ROOT / "multilabel_overrides.csv"

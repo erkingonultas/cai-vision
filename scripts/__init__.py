@@ -6,8 +6,8 @@ top-level `cai` package; scripts only do argument parsing and
 orchestration.
 
 Run a script either way:
-    python scripts/train.py [args...]
-    python -m scripts.train [args...]
+    python scripts/evaluate_model.py [args...]
+    python -m scripts.evaluate_model [args...]
 
 The `-m` form is recommended because it works regardless of the current
 working directory.
