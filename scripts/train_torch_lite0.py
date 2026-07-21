@@ -275,33 +275,16 @@ def main() -> None:
     # --- Group B/C: optimizer + runtime knobs. Defaults are pulled from
     # TrainConfig so the JSON file and the CLI stay in sync.
     defaults = TrainConfig()
-    ap.add_argument("--epochs",        type=int,   default=defaults.runtime.epochs)
-    ap.add_argument("--batch-size",    type=int,   default=defaults.runtime.batch_size)
-    ap.add_argument("--num-workers",   type=int,   default=defaults.runtime.num_workers)
-    ap.add_argument("--seed",          type=int,   default=defaults.runtime.seed)
-    ap.add_argument("--patience",      type=int,   default=defaults.runtime.patience,
-                    help="Early-stopping patience in epochs (on val top-1).")
-    ap.add_argument("--lr",            type=float, default=defaults.optim.lr)
-    ap.add_argument("--label-smooth",  type=float, default=defaults.optim.label_smoothing)
-    ap.add_argument("--pretrained",    type=lambda x: x.lower() != "false", default=None,
-                    metavar="BOOL",
-                    help="Use ImageNet-pretrained weights (default: true).")
     args = ap.parse_args()
 
-    # --- Build the resolved config: defaults <-- JSON file <-- CLI flags ---
-    cfg = TrainConfig.load(args.config) if args.config else TrainConfig()
-    cfg.runtime.epochs      = args.epochs
-    cfg.runtime.batch_size  = args.batch_size
-    cfg.runtime.num_workers = args.num_workers
-    cfg.runtime.seed        = args.seed
-    cfg.runtime.patience    = args.patience
-    cfg.runtime.pretrained  = args.pretrained
-    cfg.optim.lr            = args.lr
-    cfg.optim.label_smoothing = args.label_smooth
+    # --- Build the resolved config: defaults <-- JSON file ---
+    cfg = TrainConfig.load(args.config) if args.config else defaults
 
     # Warn about any misaligned knobs before we start training.
     for w in cfg.warnings():
         print(f"[config warning] {w}")
+    
+    print(f"Parameters loaded: {cfg.to_dict()}")
 
     # Resolve the canonical output paths under the (possibly overridden) out-dir.
     args.out_dir.mkdir(parents=True, exist_ok=True)
