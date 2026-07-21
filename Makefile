@@ -171,7 +171,7 @@ validate-onnx:                 ## Structural + smoke-test validate an ONNX model
 .PHONY: eval
 eval:                          ## Evaluate TS model on CSV (overrides: CSV TS_MODEL EVAL_BATCH)
 	@$(PY) -c "from pathlib import Path; import sys; sys.exit(0 if Path(r'$(CSV)').is_file() else 1)" || (echo ERROR: CSV not found: $(CSV). Run "make dataset-build-manifests". && exit 1)
-	@$(PY) -c "from pathlib import Path; import sys; sys.exit(0 if Path(r'$(TS_MODEL)').is_file() else 1)" || (echo ERROR: TS model not found: $(TS_MODEL). Run "make export-ts" or specify model path with "--model-path". && exit 1)
+	@$(PY) -c "from pathlib import Path; import sys; sys.exit(0 if Path(r'$(TS_MODEL)').is_file() else 1)" || (echo ERROR: TS model not found: $(TS_MODEL). Run "make export-ts" or specify model path with "TS_MODEL". && exit 1)
 	$(PY) -m $(SCRIPTS).evaluate_ts --csv $(CSV) --model-path $(TS_MODEL) --batch-size $(EVAL_BATCH) --workers $(EVAL_WORKERS)
 
 .PHONY: eval-val
