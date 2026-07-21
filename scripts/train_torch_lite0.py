@@ -23,6 +23,9 @@ Usage:
 
     # Point at a different dataset root:
     python scripts/train_torch_lite0.py --data-root /path/to/dataset
+
+    # Use a JSON config for optimizer/runtime knobs (see cai/train_config.py):
+    python scripts/train_torch_lite0.py --config experiments/cosine_long.json
 """
 from __future__ import annotations
 
@@ -55,6 +58,7 @@ from cai.data import CSVDataset, make_loader, normalize_class_ids
 from cai.device import get_device
 from cai.metrics import topk_correct
 from cai.model import build_model
+from cai.train_config import TrainConfig
 
 # An "item" is a (filepath, class_id) pair. Class ids are 0-based.
 Item = Tuple[str, int]
@@ -193,7 +197,9 @@ def _train_one_epoch(
         loss.backward()
         optimizer.step()
         # Per-iteration step works with CosineAnnealingWarmRestarts.
-        scheduler.step(epoch + n / len(loader))
+        # PyTorch docs show fractional epoch values here; the stub's int|None
+        # annotation is incorrect — the implementation uses math.floor() internally.
+        scheduler.step((epoch - 1) + i / n_batches) # type: ignore[arg-type]
 
         bs = xb.size(0)
         total_loss += loss.item() * bs
@@ -218,6 +224,7 @@ def _evaluate(
     epoch: int,
     total_epochs: int,
     pp: ProgressPrinter,
+    phase: str = "val"
 ) -> Tuple[float, float, float]:
     """Run one evaluation pass and return (loss, top1, top5) averaged over samples."""
     model.eval()
@@ -233,7 +240,7 @@ def _evaluate(
         top1_correct += topk_correct(logits, yb, k=1)
         top5_correct += topk_correct(logits, yb, k=5)
         n += bs
-        pp.update(epoch, total_epochs, j, n_batches, "val")
+        pp.update(epoch, total_epochs, j, n_batches, phase)
     pp.newline()
     return (
         total_loss / max(1, n),
@@ -249,6 +256,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description="Train EfficientNet-Lite0 on the CAI-Vision dataset."
     )
+    # --- Group A: dataset / output paths (CLI-only, not in TrainConfig) ---
     ap.add_argument("--data-root", type=Path, default=DATASET_ROOT,
                     help="Directory containing train.csv/val.csv/test.csv.")
     ap.add_argument("--train-csv", type=Path, default=TRAIN_CSV,
@@ -258,16 +266,42 @@ def main() -> None:
     ap.add_argument("--test-csv",  type=Path, default=TEST_CSV,
                     help="Path to the test CSV.")
     ap.add_argument("--out-dir",   type=Path, default=TORCH_RUNS_DIR,
-                    help="Output directory; ckpt_best.pt and model_final_fp32.pt go here.")
-    ap.add_argument("--epochs",        type=int,   default=16)
-    ap.add_argument("--batch-size",    type=int,   default=64)
-    ap.add_argument("--lr",            type=float, default=1e-3)
-    ap.add_argument("--label-smooth",  type=float, default=0.1)
-    ap.add_argument("--patience",      type=int,   default=4,
+                    help="Output directory; ckpt_best.pt, model_final_fp32.pt, "
+                         "and train_config.json go here.")
+    ap.add_argument("--config", type=Path, default=None,
+                    help="Optional JSON config for optimizer/runtime knobs "
+                         "(see cai/train_config.py). CLI flags below override it.")
+
+    # --- Group B/C: optimizer + runtime knobs. Defaults are pulled from
+    # TrainConfig so the JSON file and the CLI stay in sync.
+    defaults = TrainConfig()
+    ap.add_argument("--epochs",        type=int,   default=defaults.runtime.epochs)
+    ap.add_argument("--batch-size",    type=int,   default=defaults.runtime.batch_size)
+    ap.add_argument("--num-workers",   type=int,   default=defaults.runtime.num_workers)
+    ap.add_argument("--seed",          type=int,   default=defaults.runtime.seed)
+    ap.add_argument("--patience",      type=int,   default=defaults.runtime.patience,
                     help="Early-stopping patience in epochs (on val top-1).")
-    ap.add_argument("--num-workers",   type=int,   default=6)
-    ap.add_argument("--seed",          type=int,   default=42)
+    ap.add_argument("--lr",            type=float, default=defaults.optim.lr)
+    ap.add_argument("--label-smooth",  type=float, default=defaults.optim.label_smoothing)
+    ap.add_argument("--pretrained",    type=lambda x: x.lower() != "false", default=None,
+                    metavar="BOOL",
+                    help="Use ImageNet-pretrained weights (default: true).")
     args = ap.parse_args()
+
+    # --- Build the resolved config: defaults <-- JSON file <-- CLI flags ---
+    cfg = TrainConfig.load(args.config) if args.config else TrainConfig()
+    cfg.runtime.epochs      = args.epochs
+    cfg.runtime.batch_size  = args.batch_size
+    cfg.runtime.num_workers = args.num_workers
+    cfg.runtime.seed        = args.seed
+    cfg.runtime.patience    = args.patience
+    cfg.runtime.pretrained  = args.pretrained
+    cfg.optim.lr            = args.lr
+    cfg.optim.label_smoothing = args.label_smooth
+
+    # Warn about any misaligned knobs before we start training.
+    for w in cfg.warnings():
+        print(f"[config warning] {w}")
 
     # Resolve the canonical output paths under the (possibly overridden) out-dir.
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -276,7 +310,7 @@ def main() -> None:
 
     # --- Repro ---
     device = get_device()
-    _seed_everything(args.seed, device)
+    _seed_everything(cfg.runtime.seed, device)
 
     # --- Data ---
     print("Loading CSVs...")
@@ -303,23 +337,31 @@ def main() -> None:
     pin_memory = (device.type == "cuda")
     train_loader, val_loader, test_loader = _build_loaders(
         train_items, val_items, test_items,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
+        batch_size=cfg.runtime.batch_size,
+        num_workers=cfg.runtime.num_workers,
         pin_memory=pin_memory,
     )
     print("Make Loader Completed")
 
     # --- Model ---
     # Keep preprocessing in the data loader; the model expects float32 [0,1].
-    model = build_model(num_classes, pretrained=True).to(device)
+    model = build_model(num_classes, pretrained=cfg.runtime.pretrained).to(device)
     print("Model Loaded")
 
     # --- Loss / Optim / Sched ---
-    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smooth)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    criterion = nn.CrossEntropyLoss(label_smoothing=cfg.optim.label_smoothing)
+    optimizer = optim.Adam(model.parameters(), lr=cfg.optim.lr)
     # Warm restarts roughly like TF CosineDecayRestarts.
+    # The first cycle's length is derived from the configured fraction of
+    # the total epoch budget, so cycles scale with --epochs automatically.
+    t0_iters = max(
+        1, int(len(train_loader) * cfg.optim.t0_fraction_of_epochs * cfg.runtime.epochs)
+    )
     scheduler = CosineAnnealingWarmRestarts(
-        optimizer, T_0=max(1, len(train_loader) * 5), T_mult=2, eta_min=1e-5
+        optimizer,
+        T_0=t0_iters,
+        T_mult=cfg.optim.t_mult,
+        eta_min=cfg.optim.eta_min,
     )
     print("Loss / Optim / Sched / Metrics Loaded")
 
@@ -332,13 +374,13 @@ def main() -> None:
     pp_train = ProgressPrinter(interval=0.5)
     pp_val = ProgressPrinter(interval=0.5)
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(1, cfg.runtime.epochs + 1):
         tr_loss, tr_top1, tr_top5 = _train_one_epoch(
             model, train_loader, criterion, optimizer, scheduler,
-            device, epoch, args.epochs, pp_train,
+            device, epoch, cfg.runtime.epochs, pp_train,
         )
         va_loss, va_top1, va_top5 = _evaluate(
-            model, val_loader, criterion, device, epoch, args.epochs, pp_val,
+            model, val_loader, criterion, device, epoch, cfg.runtime.epochs, pp_val,
         )
 
         print(
@@ -357,7 +399,7 @@ def main() -> None:
             epochs_no_improve = 0
         else:
             epochs_no_improve += 1
-            if epochs_no_improve >= args.patience:
+            if epochs_no_improve >= cfg.runtime.patience:
                 print(
                     f"Early stopping at epoch {epoch}. "
                     f"Best val_top1={best_top1:.4f}"
@@ -369,21 +411,21 @@ def main() -> None:
     if best_state is not None:
         model.load_state_dict(best_state)
 
-    print("Starting Model Eval...")
-    # Reuse the per-epoch eval helper with a silent printer, since for the
-    # final test pass we only need the aggregate numbers, not per-batch lines.
-    class _SilentPrinter:
-        def update(self, *a, **kw): pass
-        def newline(self): pass
+    print("Starting Model Eval...")    
     te_loss, te_top1, te_top5 = _evaluate(
         model, test_loader, criterion, device,
-        epoch=args.epochs, total_epochs=args.epochs, pp=_SilentPrinter(),
+        epoch=cfg.runtime.epochs, total_epochs=cfg.runtime.epochs, pp= ProgressPrinter(), phase="test"
     )
     print({"TEST_loss": te_loss, "TEST_top1": te_top1, "TEST_top5": te_top5})
 
     # --- Save plain FP32 final for export ---
     torch.save({"model": model.state_dict(), "num_classes": num_classes}, final_ckpt)
     print(f"Saved: {final_ckpt}")
+
+    # --- Dump the resolved config alongside the run, for reproducibility. ---
+    config_dump = args.out_dir / "train_config.json"
+    cfg.save(config_dump)
+    print(f"Saved config: {config_dump}")
 
 
 if __name__ == "__main__":
