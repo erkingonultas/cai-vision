@@ -8,10 +8,10 @@ may be 0-based or 1-based; they are auto-detected and normalised to
 For each run the script writes, into a timestamped subdirectory of
 ``--out``:
 
-* ``summary.json`` — top-1/top-5 accuracy, device, model path, etc.
-* ``per_class.csv`` — per-class support, correct, and accuracy.
+* ``summary.json`` — top-1/top-3/top-5 accuracy, device, model path, etc.
+* ``per_class.csv`` — per-class recall, precision, F1, and top confusion.
 * ``confusion_matrix.csv`` — full ``NUM_CLASSES x NUM_CLASSES`` matrix.
-* ``predictions.csv`` — only if ``--save-preds`` is passed.
+* ``predictions.csv`` — per-sample predictions and predicted probabilities.
 
 Usage:
     # Default paths, auto-detect class_id base:
@@ -22,8 +22,6 @@ Usage:
         --model-path scripts/torch_runs/outputs/ts_latest/model_lite0_fp32.ts \\
         --batch-size 64 --workers 4
 
-    # Also write per-sample predictions:
-    python scripts/eval_from_csv.py --csv /path/to/test.csv --save-preds
 """
 from __future__ import annotations
 
@@ -99,9 +97,8 @@ def evaluate(
     *,
     batch_size: int = 32,
     num_workers: int = 2,
-    save_preds: bool = False,
 ) -> dict:
-    """Run the evaluation and write the result files. Returns a summary dict."""
+    """Run the evaluation and write all result files. Returns a summary dict."""
     device = get_device()
     num_classes = len(labels)
 
@@ -120,6 +117,7 @@ def evaluate(
     print("----- Setup complete. -----")
     print("----- Evaluation started... -----")
     top1_correct = 0
+    top3_correct = 0
     top5_correct = 0
     total = 0
     conf_mat = np.zeros((num_classes, num_classes), dtype=np.int32)
@@ -133,6 +131,7 @@ def evaluate(
         probs = F.softmax(logits, dim=1)
 
         top1_correct += topk_correct(logits, yb, k=1)
+        top3_correct += topk_correct(logits, yb, k=min(3, num_classes))
         top5_correct += topk_correct(logits, yb, k=min(5, num_classes))
 
         pred1 = probs.argmax(dim=1)
@@ -143,21 +142,39 @@ def evaluate(
 
         total += yb.size(0)
 
-        if save_preds:
-            probs_cpu = probs.cpu().numpy()
-            for i, (path, t, p) in enumerate(zip(paths, t_cpu, p_cpu)):
-                prob_p = float(probs_cpu[i, p])
-                pred_rows.append(
-                    [
-                        path,
-                        labels[t], int(t),
-                        labels[p], int(p),
-                        f"{prob_p:.6f}",
-                    ]
-                )
+        probs_cpu = probs.cpu().numpy()
+        for i, (path, t, p) in enumerate(zip(paths, t_cpu, p_cpu)):
+            pred_probability = float(probs_cpu[i, p])
+            pred_rows.append(
+                [
+                    path,
+                    labels[t], int(t),
+                    labels[p], int(p),
+                    f"{pred_probability:.6f}",
+                ]
+            )
 
     top1 = 100.0 * top1_correct / max(1, total)
+    top3 = 100.0 * top3_correct / max(1, total)
     top5 = 100.0 * top5_correct / max(1, total)
+
+    print("----- Validating results... -----")
+    confusion_total = int(conf_mat.sum())
+    confusion_correct = int(np.trace(conf_mat))
+    support_total = int(conf_mat.sum(axis=1).sum())
+
+    assert conf_mat.shape == (num_classes, num_classes)
+    assert confusion_total == total, (
+        f"Confusion matrix total ({confusion_total}) != evaluated samples ({total})"
+    )
+    assert confusion_correct == top1_correct, (
+        f"Confusion matrix diagonal ({confusion_correct}) != top-1 correct ({top1_correct})"
+    )
+    assert support_total == total, (
+        f"Per-class support total ({support_total}) != evaluated samples ({total})"
+    )
+
+    evaluation_integrity = True
 
     # --- Persist outputs ---
     print("----- Preparing output... -----")
@@ -176,8 +193,10 @@ def evaluate(
         "images_evaluated": total,
         "label_indexing": indexing,
         "top1_acc": round(top1, 4),
+        "top3_acc": round(top3, 4),
         "top5_acc": round(top5, 4),
         "num_classes": num_classes,
+        "evaluation_integrity": evaluation_integrity,
         "model_path": str(model_path),
         "device": str(device),
         "timestamp": ts,
@@ -188,12 +207,65 @@ def evaluate(
 
     with open(run_dir / "per_class.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["label", "class_index", "support", "correct", "accuracy_percent"])
+        w.writerow(
+            [
+                "label",
+                "class_index",
+                "support",
+                "correct",
+                "recall_percent",
+                "predicted_count",
+                "precision_percent",
+                "f1_percent",
+                "top_confusion_label",
+                "top_confusion_count",
+            ]
+        )
+
         for i, label in enumerate(labels):
             support = int(conf_mat[i, :].sum())
             correct = int(conf_mat[i, i])
-            acc = 100.0 * correct / support if support > 0 else 0.0
-            w.writerow([label, i, support, correct, f"{acc:.4f}"])
+            predicted_count = int(conf_mat[:, i].sum())
+
+            recall = 100.0 * correct / support if support > 0 else 0.0
+            precision = (
+                100.0 * correct / predicted_count
+                if predicted_count > 0
+                else 0.0
+            )
+
+            if precision + recall > 0.0:
+                f1 = 2.0 * precision * recall / (precision + recall)
+            else:
+                f1 = 0.0
+
+            # Find the most common incorrect prediction for this true class.
+            # Exclude the diagonal because it represents correct predictions.
+            confusion_row = conf_mat[i, :].copy()
+            confusion_row[i] = 0
+            top_confusion_count = int(confusion_row.max())
+
+            if top_confusion_count > 0:
+                top_confusion_idx = int(confusion_row.argmax())
+                top_confusion_label = labels[top_confusion_idx]
+            else:
+                top_confusion_label = ""
+
+            w.writerow(
+                [
+                    label,
+                    i,
+                    support,
+                    correct,
+                    f"{recall:.4f}",
+                    predicted_count,
+                    f"{precision:.4f}",
+                    f"{f1:.4f}",
+                    top_confusion_label,
+                    top_confusion_count,
+                ]
+            )
+
 
     with open(run_dir / "confusion_matrix.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -201,19 +273,26 @@ def evaluate(
         for i, label in enumerate(labels):
             w.writerow([label] + list(map(int, conf_mat[i, :])))
 
-    if save_preds:
-        with open(run_dir / "predictions.csv", "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            w.writerow(
-                ["filepath", "true_label", "true_idx", "pred_label", "pred_idx", "pred_confidence"]
-            )
-            w.writerows(pred_rows)
+    with open(run_dir / "predictions.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(
+            [
+                "filepath",
+                "true_label",
+                "true_idx",
+                "pred_label",
+                "pred_idx",
+                "pred_probability",
+            ]
+        )
+        w.writerows(pred_rows)
 
     print("----- Evaluation Summary -----")
     print(f"CSV: {csv_path}")
     print(f"Images evaluated: {total}")
     print(f"Label indexing: {indexing}")
     print(f"Top-1 Accuracy: {top1:.2f}%")
+    print(f"Top-3 Accuracy: {top3:.2f}%")
     print(f"Top-5 Accuracy: {top5:.2f}%")
     print(f"\nResults written to: {run_dir.resolve()}")
 
@@ -247,11 +326,6 @@ def main() -> None:
     ap.add_argument("--labels", type=Path, default=LABELS_FILE, help="Path to labels.txt.")
     ap.add_argument("--batch-size", type=int, default=32, help="Eval batch size.")
     ap.add_argument("--workers", type=int, default=2, help="DataLoader num_workers.")
-    ap.add_argument(
-        "--save-preds",
-        action="store_true",
-        help="Also write per-sample predictions.csv.",
-    )
     args = ap.parse_args()
 
     labels = load_labels(args.labels)
@@ -263,7 +337,6 @@ def main() -> None:
         labels=labels,
         batch_size=args.batch_size,
         num_workers=args.workers,
-        save_preds=args.save_preds,
     )
 
 

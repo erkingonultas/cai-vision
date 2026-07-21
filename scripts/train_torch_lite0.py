@@ -18,9 +18,6 @@ Usage:
     # Defaults (matches original hardcoded values):
     python scripts/train_torch_lite0.py
 
-    # Hyperparameter sweep:
-    python scripts/train_torch_lite0.py --epochs 16 --lr 1e-3 --batch-size 64
-
     # Point at a different dataset root:
     python scripts/train_torch_lite0.py --data-root /path/to/dataset
 
@@ -54,7 +51,7 @@ from cai.constants import (
     TORCH_RUNS_DIR,
     VAL_CSV,
 )
-from cai.data import CSVDataset, make_loader, normalize_class_ids
+from cai.data import make_loader, normalize_class_ids
 from cai.device import get_device
 from cai.metrics import topk_correct
 from cai.model import build_model
@@ -270,15 +267,14 @@ def main() -> None:
                          "and train_config.json go here.")
     ap.add_argument("--config", type=Path, default=None,
                     help="Optional JSON config for optimizer/runtime knobs "
-                         "(see cai/train_config.py). CLI flags below override it.")
+                         "(see cai/train_config.py).")
 
     # --- Group B/C: optimizer + runtime knobs. Defaults are pulled from
     # TrainConfig so the JSON file and the CLI stay in sync.
-    defaults = TrainConfig()
     args = ap.parse_args()
 
     # --- Build the resolved config: defaults <-- JSON file ---
-    cfg = TrainConfig.load(args.config) if args.config else defaults
+    cfg = TrainConfig.load(args.config) if args.config else TrainConfig()
 
     # Warn about any misaligned knobs before we start training.
     for w in cfg.warnings():
