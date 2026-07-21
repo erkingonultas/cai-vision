@@ -1,0 +1,17 @@
+{
+    "optim": {
+        "lr": 0.0001,
+        "label_smoothing": 0.05,
+        "t0_fraction_of_epochs": 0.333,
+        "t_mult": 2,
+        "eta_min": 0.0000001
+    },
+    "runtime": {
+        "epochs": 24,
+        "batch_size": 64,
+        "num_workers": 6,
+        "seed": 7,
+        "patience": 8,
+        "pretrained": true
+    }
+}
