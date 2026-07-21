@@ -22,7 +22,7 @@ Usage:
     python scripts/train_torch_lite0.py --data-root /path/to/dataset
 
     # Use a JSON config for optimizer/runtime knobs (see cai/train_config.py):
-    python scripts/train_torch_lite0.py --config experiments/cosine_long.json
+    python scripts/train_torch_lite0.py --config configs/example_config.json
 """
 from __future__ import annotations
 
