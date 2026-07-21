@@ -144,6 +144,8 @@ Useful overrides for `build-manifests`:
 make dataset-build-manifests VAL_RATIO=0.10 TEST_RATIO=0.15 SEED=42
 ```
 
+📖 See the dedicated [`scripts/manage_dataset.README.md`](scripts/manage_dataset.README.md) for the full subcommand reference, schema details, and edge cases.
+
 ---
 
 ### 2. Train
