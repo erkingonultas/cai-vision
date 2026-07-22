@@ -10,8 +10,6 @@
 
 CAI-Vision is a small-footprint vision model aimed at identifying foods from around the world, with a special focus on a few Turkish dishes. It ships with a complete, reproducible pipeline: **dataset preparation → training → quantization-aware export → evaluation → mobile-ready ONNX validation**.
 
-*Released under the [MIT License](LICENSE) — Copyright © 2025 Erkin Gönültaş.*
-
 
 ## ✨ Highlights
 
@@ -37,17 +35,21 @@ The evaluation passed the project's integrity checks and was performed on CUDA.
 
 ### Key Findings
 
-The model correctly identifies the food class as its **top prediction in 77.16% of cases**. When the five most likely predictions are considered, accuracy increases to **92.47%**, indicating that the model is substantially more effective as a candidate-ranking system than as a strict single-label classifier.
+The model identifies the correct food class as its **top prediction in 77.16% of cases**. When the five most likely predictions are considered, the correct class is included in **92.47% of cases**, making the model particularly suitable for applications that present users with a ranked set of candidate foods.
 
-This distinction is important for practical food recognition: visually similar dishes can be difficult to separate into a single definitive class, while presenting a small set of likely candidates allows the user to select the correct result.
+Performance varies across classes. The test set contains an uneven number of examples per class, ranging from **12 to 215 images**, with many classes having relatively limited evaluation support. This class imbalance, together with the fine-grained visual similarity between some food categories, should be considered when interpreting per-class performance.
+
+Despite these challenges, **all 437 classes received at least one correct prediction**, and the median per-class recall was approximately **75%**.
 
 ### Conclusion
 
-CAI Vision demonstrates a complete computer vision pipeline for food classification, from dataset preparation and model training to evaluation, model export, and inference. The final model achieves strong Top-5 performance across a challenging **437-class classification problem**, while remaining suitable for downstream inference through exported model formats.
+CAI Vision demonstrates a complete computer vision pipeline for food classification, covering data preparation, model training, evaluation, model export, and inference.
 
-The results also highlight the main limitation of the current approach: fine-grained food classes can be visually ambiguous, making exact single-label classification inherently more difficult. Future improvements would therefore focus on increasing Top-1 accuracy while preserving the strong Top-5 candidate coverage.
+The final model achieves **77.16% Top-1** and **92.47% Top-5 accuracy** across a challenging 437-class classification problem. The results suggest that the model is more naturally suited to **ranked candidate selection** than strict single-label prediction, which aligns well with practical food recognition interfaces.
 
-Overall, the project establishes a practical foundation for integrating food recognition into applications where the model can provide a ranked set of likely food candidates rather than relying exclusively on a single prediction.
+The main limitations are the **uneven class distribution and limited sample counts for some classes**, as well as the inherent difficulty of distinguishing visually similar foods. Future improvements would therefore focus on improving dataset balance and coverage, increasing Top-1 accuracy, and further investigating the most frequently confused classes.
+
+Overall, the project provides a practical foundation for integrating food recognition into downstream applications while making the limitations of the current dataset and model explicit.
 
 
 
