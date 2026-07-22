@@ -12,7 +12,6 @@ CAI-Vision is a small-footprint vision model aimed at identifying foods from aro
 
 *Released under the [MIT License](LICENSE) — Copyright © 2025 Erkin Gönültaş.*
 
----
 
 ## ✨ Highlights
 
@@ -23,7 +22,34 @@ CAI-Vision is a small-footprint vision model aimed at identifying foods from aro
 - 🧹 **Deduped, schema-validated dataset** with train/val/test manifest CSVs.
 - 🛠️ **Two ways to drive the pipeline:** a friendly **Makefile** *or* raw **`python -m scripts.<module>`** calls.
 
----
+
+## Results
+
+The final model was evaluated on **26,043 test images across 437 food classes** using the exported TorchScript model.
+
+| Metric         |     Result |
+| -------------- | ---------: |
+| Top-1 Accuracy | **77.16%** |
+| Top-3 Accuracy | **89.47%** |
+| Top-5 Accuracy | **92.47%** |
+
+The evaluation passed the project's integrity checks and was performed on CUDA.
+
+### Key Findings
+
+The model correctly identifies the food class as its **top prediction in 77.16% of cases**. When the five most likely predictions are considered, accuracy increases to **92.47%**, indicating that the model is substantially more effective as a candidate-ranking system than as a strict single-label classifier.
+
+This distinction is important for practical food recognition: visually similar dishes can be difficult to separate into a single definitive class, while presenting a small set of likely candidates allows the user to select the correct result.
+
+### Conclusion
+
+CAI Vision demonstrates a complete computer vision pipeline for food classification, from dataset preparation and model training to evaluation, model export, and inference. The final model achieves strong Top-5 performance across a challenging **437-class classification problem**, while remaining suitable for downstream inference through exported model formats.
+
+The results also highlight the main limitation of the current approach: fine-grained food classes can be visually ambiguous, making exact single-label classification inherently more difficult. Future improvements would therefore focus on increasing Top-1 accuracy while preserving the strong Top-5 candidate coverage.
+
+Overall, the project establishes a practical foundation for integrating food recognition into applications where the model can provide a ranked set of likely food candidates rather than relying exclusively on a single prediction.
+
+
 
 ## 📁 Project Layout
 
@@ -53,7 +79,7 @@ CAI-Vision is a small-footprint vision model aimed at identifying foods from aro
 └── requirements*.txt         ← CUDA 13.0 / stable / full stacks
 ```
 
----
+
 
 ## 📦 Requirements
 
@@ -66,7 +92,7 @@ CAI-Vision is a small-footprint vision model aimed at identifying foods from aro
 
 > Tip: the Makefile wires `python -m pip` so it works identically on Windows CMD, PowerShell, Git Bash, and WSL.
 
----
+
 
 ## 🚀 How to Use
 
@@ -297,7 +323,6 @@ python -m scripts.export_onnx --ckpt torch_runs/model_final_fp32.pt
 python -m scripts.validate_onnx torch_runs/outputs/onnx_*/cai_vision.onnx
 ```
 
----
 
 ## 🧹 Cleanup
 
@@ -308,7 +333,6 @@ make clean          # remove torch_runs/ AND derived dataset CSVs
 make clean-runs     # remove only torch_runs/ (keep train/val/test.csv)
 ```
 
----
 
 ## 🛠️ Troubleshooting
 
@@ -317,7 +341,6 @@ make clean-runs     # remove only torch_runs/ (keep train/val/test.csv)
 - **ONNX runtime errors on device** — always run `make validate-onnx` locally first; the smoke test catches most shape/IO issues.
 - **Slow training** — verify CUDA with `make check-torch`. If you're on CPU, switch to `make install-stable` and expect training to be slow.
 
----
 
 ## 📜 License
 
